@@ -59,6 +59,7 @@ function stringToHex(str: string): string {
 }
 
 function fetchLensApiStats(lensApi: string, profileId: string): any {
+  const mainLensApi = "https://api-mumbai.lens.dev";
   // profile_id should be like 0x0001
   let headers = {
     "Content-Type": "application/json",
@@ -87,7 +88,7 @@ function fetchLensApiStats(lensApi: string, profileId: string): any {
   let response = pink.batchHttpRequest(
     [
       {
-        url: lensApi,
+        url: mainLensApi,
         method: "POST",
         headers,
         body,
@@ -155,9 +156,22 @@ export default function main(request: HexString, settings: string): HexString {
 
   try {
     const respData = fetchLensApiStats(settings, profileId);
-    let stats = respData.data.profile.stats.totalCollects;
-    console.log("response:", [TYPE_RESPONSE, requestId, stats]);
-    return encodeReply([TYPE_RESPONSE, requestId, stats]);
+    const totalFollowers = respData.data.profile.stats.totalFollowers;
+    const totalFollowing = respData.data.profile.stats.totalFollowing;
+    let stat = 0;
+    if (totalFollowers == 0 && totalFollowing > 0) {
+      stat = 1;
+    } else if (totalFollowers > 1 && totalFollowers < 100) {
+      stat = 2;
+    } else if (totalFollowers > 100 && totalFollowers < 1000) {
+      stat = 3;
+    } else if (totalFollowers > 1000 && totalFollowing < 10000) {
+      stat = 4;
+    } else if (totalFollowers > totalFollowing && totalFollowers - totalFollowing == 11) {
+      stat = 5;
+    }
+    console.log("response:", [TYPE_RESPONSE, requestId, stat]);
+    return encodeReply([TYPE_RESPONSE, requestId, stat]);
   } catch (error) {
     if (error === Error.FailedToFetchData) {
       throw error;
