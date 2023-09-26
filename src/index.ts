@@ -6,17 +6,10 @@ type HexString = `0x${string}`
 // eth abi coder
 const uintCoder = new Coders.NumberCoder(32, false, "uint256");
 const bytesCoder = new Coders.BytesCoder("bytes");
-// Encode Address
-const addressCoder = new Coders.AddressCoder("address");
-// Encode Array of addresses with a length of 10
-const addressArrayCoder = new Coders.ArrayCoder(addressCoder, 10, "address");
-// Encode Array of bytes with a length of 10
-const bytesArrayCoder = new Coders.ArrayCoder(bytesCoder, 10, "bytes");
-// Encode Array of uint with a length of 10
-const uintArrayCoder = new Coders.ArrayCoder(uintCoder, 10, "uint256");
+const stringCoder = new Coders.StringCoder("string");
 
-function encodeReply(reply: [number, number, number]): HexString {
-  return Coders.encode([uintCoder, uintCoder, uintCoder], reply) as HexString;
+function encodeReply(reply: [number, number, number, string]): HexString {
+  return Coders.encode([uintCoder, uintCoder, uintCoder, stringCoder], reply) as HexString;
 }
 
 // Defined in TestLensOracle.sol
@@ -58,60 +51,6 @@ function stringToHex(str: string): string {
   return "0x" + hex;
 }
 
-function fetchLensApiStats(lensApi: string, profileId: string): any {
-  const mainLensApi = "https://api-mumbai.lens.dev";
-  // profile_id should be like 0x0001
-  let headers = {
-    "Content-Type": "application/json",
-    "User-Agent": "phat-contract",
-  };
-  let query = JSON.stringify({
-    query: `query Profile {
-            profile(request: { profileId: \"${profileId}\" }) {
-                stats {
-                    totalFollowers
-                    totalFollowing
-                    totalPosts
-                    totalComments
-                    totalMirrors
-                    totalPublications
-                    totalCollects
-                }
-            }
-        }`,
-  });
-  let body = stringToHex(query);
-  //
-  // In Phat Function runtime, we not support async/await, you need use `pink.batchHttpRequest` to
-  // send http request. The function will return an array of response.
-  //
-  let response = pink.batchHttpRequest(
-    [
-      {
-        url: mainLensApi,
-        method: "POST",
-        headers,
-        body,
-        returnTextBody: true,
-      },
-    ],
-    10000
-  )[0];
-  if (response.statusCode !== 200) {
-    console.log(
-      `Fail to read Lens api with status code: ${response.statusCode}, error: ${
-        response.error || response.body
-      }}`
-    );
-    throw Error.FailedToFetchData;
-  }
-  let respBody = response.body;
-  if (typeof respBody !== "string") {
-    throw Error.FailedToDecode;
-  }
-  return JSON.parse(respBody);
-}
-
 function parseProfileId(hexx: string): string {
   var hex = hexx.toString();
   if (!isHexString(hex)) {
@@ -124,6 +63,74 @@ function parseProfileId(hexx: string): string {
     str += ch;
   }
   return str;
+}
+
+function sendTGMessage(msg: string) {
+  const strMsg = JSON.stringify(msg)
+  console.log(strMsg.toString())
+  console.log(msg.toString())
+  const tg_bot_http_endpoint = `https://api.telegram.org/bot6365043287:AAGd0jeyMmv1W7FJ7K_12y_PgpTQ5qFjbXw/sendMessage?chat_id=-1001986190934&text=`;
+  let headers = {
+    "Content-Type": "application/json",
+    "User-Agent": "phat-contract",
+  };
+  const res3 = pink.httpRequest({
+    url: `${tg_bot_http_endpoint}\n${msg}`,
+    method: "POST",
+    headers,
+    returnTextBody: true,
+  });
+  console.info(res3);
+}
+
+function getDrandRandomness(): any {
+  const drandHttpEndpoint = "https://api.drand.sh/"
+  let headers = {
+    "Content-Type": "application/json",
+    "User-Agent": "phat-contract",
+  };
+  const response = pink.httpRequest({
+    url: `${drandHttpEndpoint}chains`,
+    method: "GET",
+    headers,
+    returnTextBody: true,
+  });
+  console.info(response);
+  if (response.statusCode !== 200) {
+    console.log(
+        `Fail to read Lens api with status code: ${response.statusCode}, error: ${
+            response.body
+        }}`
+    );
+    throw Error.FailedToFetchData;
+  }
+  let respBody = response.body;
+
+  if (typeof respBody !== "string") {
+    throw Error.FailedToDecode;
+  }
+  let hi = JSON.parse(respBody);
+  console.log(`${hi}`);
+  let chains = [];
+  for (let chain of hi) {
+    console.log(chain)
+    chains.push({
+      url: `${drandHttpEndpoint}${chain}/public/latest`,
+      method: "GET",
+      headers,
+      returnTextBody: true,
+    });
+  }
+  let randoms = pink.batchHttpRequest(chains, 10000);
+  console.log(randoms)
+  let yo = []
+  for (let resp of randoms) {
+    if (typeof resp.body !== "string") {
+      throw Error.FailedToDecode;
+    }
+    yo.push(JSON.parse(resp.body));
+  }
+  return yo;
 }
 
 
@@ -149,36 +156,24 @@ export default function main(request: HexString, settings: string): HexString {
     [requestId, encodedProfileId] = Coders.decode([uintCoder, bytesCoder], request);
   } catch (error) {
     console.info("Malformed request received");
-    return encodeReply([TYPE_ERROR, 0, errorToCode(error as Error)]);
+    return encodeReply([TYPE_ERROR, 0, errorToCode(error as Error), "error"]);
   }
   const profileId = parseProfileId(encodedProfileId as string);
   console.log(`Request received for profile ${profileId}`);
 
   try {
-    const respData = fetchLensApiStats(settings, profileId);
-    const totalFollowers = respData.data.profile.stats.totalFollowers;
-    const totalFollowing = respData.data.profile.stats.totalFollowing;
-    let stat = 0;
-    if (totalFollowers == 0 && totalFollowing > 0) {
-      stat = 1;
-    } else if (totalFollowers > 1 && totalFollowers < 100) {
-      stat = 2;
-    } else if (totalFollowers > 100 && totalFollowers < 1000) {
-      stat = 3;
-    } else if (totalFollowers > 1000 && totalFollowing < 10000) {
-      stat = 4;
-    } else if (totalFollowers > totalFollowing && totalFollowers - totalFollowing == 11) {
-      stat = 5;
-    }
-    console.log("response:", [TYPE_RESPONSE, requestId, stat]);
-    return encodeReply([TYPE_RESPONSE, requestId, stat]);
+    const respData = getDrandRandomness();
+    sendTGMessage(JSON.stringify(respData));
+    let stats = respData[0].randomness;
+    console.log("response:", [TYPE_RESPONSE, requestId, 1, stats]);
+    return encodeReply([TYPE_RESPONSE, requestId, 1, stats]);
   } catch (error) {
     if (error === Error.FailedToFetchData) {
       throw error;
     } else {
       // otherwise tell client we cannot process it
       console.log("error:", [TYPE_ERROR, requestId, error]);
-      return encodeReply([TYPE_ERROR, requestId, errorToCode(error as Error)]);
+      return encodeReply([TYPE_ERROR, requestId, errorToCode(error as Error), "error"]);
     }
   }
 }
